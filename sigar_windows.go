@@ -14,12 +14,15 @@ import (
 )
 
 var (
-	kernel32DLL = syscall.MustLoadDLL("kernel32")
-
-	procGetDiskFreeSpace     = kernel32DLL.MustFindProc("GetDiskFreeSpaceW")
-	procGetSystemTimes       = kernel32DLL.MustFindProc("GetSystemTimes")
-	procGetTickCount64       = kernel32DLL.MustFindProc("GetTickCount64")
-	procGlobalMemoryStatusEx = kernel32DLL.MustFindProc("GlobalMemoryStatusEx")
+	kernel32DLL                 = syscall.MustLoadDLL("kernel32")
+	procGetDiskFreeSpace        *syscall.Proc
+	procGetDiskFreeSpaceErr     error
+	procGetSystemTimes          *syscall.Proc
+	procGetSystemTimesErr       error
+	procGetTickCount64          *syscall.Proc
+	procGetTickCount64Err       error
+	procGlobalMemoryStatusEx    *syscall.Proc
+	procGlobalMemoryStatusExErr error
 
 	// processQueryLimitedInfoAccess is set to PROCESS_QUERY_INFORMATION for Windows
 	// 2003 and XP where PROCESS_QUERY_LIMITED_INFORMATION is unknown. For all newer
@@ -27,11 +30,21 @@ var (
 	processQueryLimitedInfoAccess = windows.PROCESS_QUERY_LIMITED_INFORMATION
 )
 
+func init() {
+	procGetDiskFreeSpace, procGetDiskFreeSpaceErr = kernel32DLL.FindProc("GetDiskFreeSpaceW")
+	procGetSystemTimes, procGetSystemTimesErr = kernel32DLL.FindProc("GetSystemTimes")
+	procGetTickCount64, procGetTickCount64Err = kernel32DLL.FindProc("GetTickCount64")
+	procGlobalMemoryStatusEx, procGlobalMemoryStatusExErr = kernel32DLL.FindProc("GlobalMemoryStatusEx")
+}
+
 func (self *LoadAverage) Get() error {
 	return ErrNotImplemented
 }
 
 func (u *Uptime) Get() error {
+	if procGetTickCount64Err != nil {
+		return procGetTickCount64Err
+	}
 	r1, _, e1 := syscall.Syscall(procGetTickCount64.Addr(), 0, 0, 0, 0)
 	if e1 != 0 {
 		return error(e1)
@@ -53,6 +66,9 @@ type memorystatusex struct {
 }
 
 func (m *Mem) Get() error {
+	if procGlobalMemoryStatusExErr != nil {
+		return procGlobalMemoryStatusExErr
+	}
 	var x memorystatusex
 	x.Length = uint32(unsafe.Sizeof(x))
 	r1, _, e1 := syscall.Syscall(procGlobalMemoryStatusEx.Addr(), 1,
@@ -104,6 +120,9 @@ func parseWmicOutput(s, sep []byte) (uint64, error) {
 }
 
 func (c *Cpu) Get() error {
+	if procGetSystemTimesErr != nil {
+		return procGetSystemTimesErr
+	}
 	var (
 		idleTime   syscall.Filetime
 		kernelTime syscall.Filetime // Includes kernel and idle time.
@@ -191,6 +210,9 @@ func (self *ProcExe) Get(pid int) error {
 }
 
 func (fs *FileSystemUsage) Get(path string) error {
+	if procGetDiskFreeSpaceErr != nil {
+		return procGetDiskFreeSpaceErr
+	}
 	root, err := syscall.UTF16PtrFromString(path)
 	if err != nil {
 		return fmt.Errorf("FileSystemUsage (%s): %s", path, err)
